@@ -1,5 +1,6 @@
 import {
   ArrowLeftOutlined,
+  InfoCircleOutlined,
   LockOutlined,
   LogoutOutlined,
 } from "@ant-design/icons";
@@ -103,6 +104,20 @@ export default function SettingsPage() {
               退出登录
             </Button>
           </div>
+        </Card>
+        <Card
+          title={
+            <>
+              <InfoCircleOutlined /> 关于
+            </>
+          }
+        >
+          <Typography.Paragraph type="secondary">
+            Light Memo 是一个轻量级备忘录应用。
+          </Typography.Paragraph>
+          <Typography.Paragraph type="secondary">
+            作者：phil616
+          </Typography.Paragraph>
         </Card>
       </div>
     </main>
