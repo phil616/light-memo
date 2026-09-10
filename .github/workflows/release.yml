@@ -1,0 +1,110 @@
+name: Release Linux amd64 backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backend-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      CGO_ENABLED: '0'
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout triggering commit and tags
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Test backend
+        working-directory: backend
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Build only Linux amd64 binary
+        working-directory: backend
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          go build -trimpath -ldflags='-s -w' -o "$GITHUB_WORKSPACE/dist/memo-api-linux-amd64" ./cmd/memo-api
+
+      - name: Choose release tag
+        id: version
+        shell: bash
+        run: |
+          git fetch --tags origin
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          def versions(*args):
+              tags = subprocess.check_output(['git', 'tag', *args], text=True).splitlines()
+              return sorted(
+                  (tuple(map(int, tag[1:].split('.'))), tag)
+                  for tag in tags
+                  if re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag)
+              )
+
+          # Reuse the tag for this commit when retrying a failed release.
+          existing = versions('--points-at', os.environ['GITHUB_SHA'])
+          if existing:
+              tag = existing[-1][1]
+          else:
+              all_versions = versions()
+              if all_versions:
+                  major, minor, patch = all_versions[-1][0]
+                  tag = f'v{major}.{minor}.{patch + 1}'
+              else:
+                  tag = 'v0.1.0'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'tag={tag}\n')
+          print(f'Release tag: {tag}')
+          PY
+
+      - name: Tag and publish single binary
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" > /dev/null; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Release $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+
+          # Upload to a draft before publishing, so releases never appear without the binary.
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/memo-release-draft"; then
+            if [ "$(cat "$RUNNER_TEMP/memo-release-draft")" = 'false' ]; then
+              echo "Release $RELEASE_TAG is already published; nothing to do."
+              exit 0
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" "$GITHUB_WORKSPACE/dist/memo-api-linux-amd64" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
