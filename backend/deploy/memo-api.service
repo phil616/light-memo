@@ -1,0 +1,26 @@
+[Unit]
+Description=Memo API
+After=network.target
+
+[Service]
+Type=simple
+User=memo
+Group=memo
+StateDirectory=memo
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/memo
+Environment=MEMO_LISTEN_ADDR=127.0.0.1:8080
+Environment=MEMO_DATABASE_PATH=/var/lib/memo/memo.db
+ExecStart=/usr/local/bin/memo-api serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/memo
+
+[Install]
+WantedBy=multi-user.target
