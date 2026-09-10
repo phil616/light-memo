@@ -1,0 +1,59 @@
+name: Build and deploy frontend to EdgeOne Pages
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# All pushes target the same project; replace an older run with the newest push.
+concurrency:
+  group: light-memo-edgeone-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+          run_install: false
+
+      - name: Set up Node.js and pnpm cache
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.14.0'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://memo-api.altasci.com' }}
+        run: pnpm build
+
+      - name: Deploy to EdgeOne Pages
+        env:
+          EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
+        run: |
+          if [ -z "$EDGEONE_API_TOKEN" ]; then
+            echo '::error::请在仓库 Actions Secrets 中设置 EDGEONE_API_TOKEN'
+            exit 1
+          fi
+          npx --yes edgeone pages deploy ./frontend/dist/ \
+            -n light-memo \
+            -t "$EDGEONE_API_TOKEN" \
+            -e production

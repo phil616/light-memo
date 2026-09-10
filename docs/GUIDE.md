@@ -8,7 +8,7 @@
 
 ## Architecture
 
-React 19 + TypeScript + Vite 8 + Ant Design 6 + TanStack Query 5 + React Router 8 构建静态 SPA，部署到 Cloudflare Pages。独立 Go 1.27 API 使用 chi 和 pure-Go SQLite，FTS5 trigram 全文索引由数据库 trigger 维护。后端不读取或嵌入任何前端文件。
+React 19 + TypeScript + Vite 8 + Ant Design 6 + TanStack Query 5 + React Router 8 构建静态 SPA，通过 GitHub Actions 部署到 EdgeOne Pages。独立 Go 1.27 API 使用 chi 和 pure-Go SQLite，FTS5 trigram 全文索引由数据库 trigger 维护。后端不读取或嵌入任何前端文件。
 
 认证使用 Argon2id 单密码、256-bit 随机会话 Token、SQLite 中的 SHA-256 Token 摘要，以及安全的 host-only Cookie。会话有效期为 30 天，剩余不足 7 天时通过有 CSRF 防护的 POST 续期。协议细节及规范冲突处理见 [SPEC.md](SPEC.md)，完整要求见 [PLAN.md](PLAN.md)。
 
@@ -74,7 +74,23 @@ CGO_ENABLED=0 go build -trimpath -o memo-api ./cmd/memo-api
 
 前端输出 `frontend/dist/`，后端输出 `backend/memo-api`。两者可独立构建和发布。
 
-## Cloudflare Pages deployment
+## EdgeOne Pages 自动部署
+
+[deploy-frontend.yml](../.github/workflows/deploy-frontend.yml) 已替代原 `.cnb.yml`。任意分支或标签的 push 都会触发构建并部署到 `light-memo` 项目的 production 环境；不按路径过滤，也支持手动运行。新 push 会取消同项目较早的进行中工作流。
+
+在仓库 **Settings → Secrets and variables → Actions → Secrets** 添加 `EDGEONE_API_TOKEN` 即可。默认 API 地址沿用原流水线的 `https://memo-api.altasci.com`；如需修改，在同一页面的 **Variables** 添加 `VITE_API_BASE_URL`，然后重新触发工作流。
+
+使用 GitHub 托管的 Ubuntu 24.04 runner、Node.js 24.14.0，以及 `frontend/package.json` 指定的 pnpm 版本。依赖安装使用 `pnpm install --frozen-lockfile`，构建使用 `pnpm build`，缓存以 `frontend/pnpm-lock.yaml` 为依据。部署密钥只注入部署步骤，不写入 Vite 环境或构建产物。
+
+部署命令：
+
+```bash
+npx --yes edgeone pages deploy ./frontend/dist/ -n light-memo -t "$EDGEONE_API_TOKEN" -e production
+```
+
+命令及密钥用法见 [EdgeOne Pages 官方 GitHub Actions 指南](https://pages.edgeone.ai/document/use-github-actions)。本工作流独立于后端 Release 工作流，不上传前端文件到 GitHub Release。
+
+## Cloudflare Pages 手动部署（可选）
 
 Pages 项目根目录设为 `frontend`，构建命令 `pnpm install --frozen-lockfile && pnpm build`，输出目录 `dist`，配置 Node 24 与 `VITE_API_BASE_URL`。为前端绑定自定义域名 `memo.example.com`；不要使用与 API 不同 site 的 pages.dev 域名进行生产认证。
 

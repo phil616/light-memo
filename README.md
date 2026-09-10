@@ -32,6 +32,7 @@ pnpm dev
 ## 文档
 
 - [使用、配置、部署与测试](docs/GUIDE.md)
+- [前端自动部署到 EdgeOne Pages](docs/GUIDE.md#edgeone-pages-自动部署)
 - [自动打标签与后端发版](docs/RELEASE.md)
 - [变量模板使用与 API](docs/TEMPLATES.md)
 - [当前实现约定](docs/SPEC.md)
