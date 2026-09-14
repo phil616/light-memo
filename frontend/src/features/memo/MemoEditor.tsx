@@ -11,6 +11,7 @@ import {
 import { SaveOutlined } from "@ant-design/icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { draftKey, readDraft, writeDraft } from "./drafts";
 import { memos } from "../../api/memos";
 import type { Memo, MemoInput } from "../../types";
 export function MemoEditor({
@@ -29,6 +30,8 @@ export function MemoEditor({
   onSaved: (m: Memo) => void;
 }) {
   const [form] = Form.useForm<MemoInput>();
+  const key = draftKey(memo?.id);
+  const [draftStored, setDraftStored] = useState(true);
   const [dirty, setDirty] = useState(false);
   const baseline = useRef("");
   const confirming = useRef(false);
@@ -42,11 +45,23 @@ export function MemoEditor({
         content: memo?.content ?? "",
       };
       baseline.current = JSON.stringify(initial);
-      setDirty(false);
+      const draft = readDraft(key);
+      setDirty(!!draft && JSON.stringify(draft) !== baseline.current);
+      setDraftStored(true);
       form.resetFields();
-      form.setFieldsValue(initial);
+      form.setFieldsValue(draft ?? initial);
     }
-  }, [open, memo, form]);
+  }, [open, memo, form, key]);
+  const changed = (values: MemoInput) => {
+    const value = {
+      title: values.title ?? "",
+      tags: values.tags ?? [],
+      content: values.content ?? "",
+    };
+    const modified = JSON.stringify(value) !== baseline.current;
+    setDirty(modified);
+    setDraftStored(writeDraft(key, modified ? value : null));
+  };
   useEffect(() => {
     if (!open || !dirty) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -64,6 +79,7 @@ export function MemoEditor({
       ),
     onSuccess: (m) => {
       setDirty(false);
+      setDraftStored(writeDraft(key, null));
       void cache.invalidateQueries({ queryKey: ["memos"] });
       void cache.invalidateQueries({ queryKey: ["tags"] });
       onSaved(m);
@@ -79,11 +95,13 @@ export function MemoEditor({
     }
     confirming.current = true;
     modal.confirm({
-      title: "放弃未保存的修改？",
-      content: "当前修改尚未保存，关闭后将丢失。",
-      okText: "放弃修改",
+      title: draftStored ? "关闭编辑并保留草稿？" : "放弃未保存的修改？",
+      content: draftStored
+        ? "草稿仅保存在当前设备，下次编辑时自动恢复，不会上传或同步。"
+        : "本地草稿保存失败，关闭后修改将丢失。",
+      okText: draftStored ? "保留并关闭" : "放弃修改",
       cancelText: "继续编辑",
-      okButtonProps: { danger: true },
+      okButtonProps: { danger: !draftStored },
       onOk: onClose,
       afterClose: () => {
         confirming.current = false;
@@ -112,7 +130,9 @@ export function MemoEditor({
             {save.isPending
               ? "正在保存…"
               : dirty
-                ? "有未保存的修改"
+                ? draftStored
+                  ? "草稿已保存在此设备"
+                  : "草稿保存失败，请勿退出"
                 : "修改后点击保存"}
           </Typography.Text>
           <Flex gap={8}>
@@ -138,15 +158,7 @@ export function MemoEditor({
         disabled={save.isPending}
         layout="vertical"
         requiredMark={false}
-        onValuesChange={(_, values) =>
-          setDirty(
-            JSON.stringify({
-              title: values.title ?? "",
-              tags: values.tags ?? [],
-              content: values.content ?? "",
-            }) !== baseline.current,
-          )
-        }
+        onValuesChange={(_, values) => changed(values)}
         onFinish={(v) => save.mutate(v)}
       >
         <Form.Item
@@ -186,6 +198,15 @@ export function MemoEditor({
             options={tags.map((value) => ({ value, label: value }))}
           />
         </Form.Item>
+        <Button
+          onClick={() => {
+            form.setFieldValue("content", "");
+            changed(form.getFieldsValue());
+          }}
+          disabled={save.isPending}
+        >
+          清空全部正文
+        </Button>
         <Form.Item
           name="content"
           label="正文"

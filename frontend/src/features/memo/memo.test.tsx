@@ -12,6 +12,7 @@ import { App, Grid, ConfigProvider } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import MemoPage from "../../pages/MemoPage";
+import { draftKey, readDraft } from "./drafts";
 import { memos } from "../../api/memos";
 vi.mock("../../api/memos", () => ({
   memos: { list: vi.fn(), tags: vi.fn(), save: vi.fn(), delete: vi.fn() },
@@ -51,6 +52,7 @@ function setup(url = "/") {
   );
 }
 beforeEach(() => {
+  localStorage.clear();
   vi.mocked(memos.list)
     .mockReset()
     .mockResolvedValue({
@@ -65,6 +67,70 @@ beforeEach(() => {
   vi.spyOn(Grid, "useBreakpoint").mockReturnValue({ md: true, xl: true });
 });
 describe("Memo workspace", () => {
+  it("manually refreshes the filtered list and tags without publishing drafts", async () => {
+    const user = userEvent.setup();
+    setup("/?q=TLS&tag=PKI");
+    await screen.findByRole("button", { name: memo.title });
+    const updated = { ...memo, title: "从其他设备更新" };
+    vi.mocked(memos.list).mockResolvedValue({ items: [updated], pagination: { limit: 30, offset: 0, hasMore: false } });
+    await user.click(screen.getByRole("button", { name: "同步" }));
+    await screen.findByRole("button", { name: updated.title });
+    expect(memos.list).toHaveBeenLastCalledWith("TLS", "PKI", 0, expect.any(AbortSignal));
+    expect(memos.tags).toHaveBeenCalledTimes(2);
+    expect(memos.save).not.toHaveBeenCalled();
+  });
+  it("reports sync failure and allows retry", async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByRole("button", { name: memo.title });
+    vi.mocked(memos.tags).mockRejectedValueOnce(new Error("同步网络失败"));
+    await user.click(screen.getByRole("button", { name: "同步" }));
+    expect(await screen.findByText("同步网络失败")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "同步" }));
+    expect(await screen.findByText("同步完成")).toBeVisible();
+  });
+  it("clears only content, restores local edits after unmount, and removes the saved draft", async () => {
+    const user = userEvent.setup();
+    const view = setup();
+    await user.click(await screen.findByRole("button", { name: "编辑当前备忘录" }));
+    await user.click(screen.getByRole("button", { name: "清空全部正文" }));
+    expect(screen.getByLabelText("正文")).toHaveValue("");
+    expect(screen.getByLabelText("标题")).toHaveValue(memo.title);
+    expect(readDraft(draftKey(1))).toEqual({ title: memo.title, tags: memo.tags, content: "" });
+    expect(memos.save).not.toHaveBeenCalled();
+    view.unmount();
+    setup();
+    await user.click(await screen.findByRole("button", { name: "编辑当前备忘录" }));
+    expect(screen.getByLabelText("正文")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: /保\s*存/ }));
+    await waitFor(() => expect(memos.save).toHaveBeenCalledWith({ title: memo.title, tags: memo.tags, content: "" }, 1));
+    await waitFor(() => expect(readDraft(draftKey(1))).toBeNull());
+  });
+  it("retains new memo drafts on close and failed save", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "新建" }));
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "本地草稿" } });
+    await user.click(screen.getByRole("button", { name: /取\s*消/ }));
+    await user.click(await screen.findByRole("button", { name: "保留并关闭" }));
+    await waitFor(() => expect(screen.queryByLabelText("标题")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "新建" }));
+    expect(screen.getByLabelText("标题")).toHaveValue("本地草稿");
+    vi.mocked(memos.save).mockRejectedValueOnce(new Error("登录已过期"));
+    await user.click(screen.getByRole("button", { name: /保\s*存/ }));
+    await screen.findByText("登录已过期");
+    expect(readDraft(draftKey())?.title).toBe("本地草稿");
+  });
+  it("warns when local draft storage fails without interrupting editing", async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByRole("button", { name: "新建" }));
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "仍可编辑" } });
+    expect(screen.getByText("草稿保存失败，请勿退出")).toBeVisible();
+    expect(screen.getByLabelText("标题")).toHaveValue("仍可编辑");
+    expect(memos.save).not.toHaveBeenCalled();
+  });
   it("lists complete memos and copies exact content without a request", async () => {
     const user = userEvent.setup();
     const clipboard = vi.fn().mockResolvedValue(undefined);
@@ -244,7 +310,7 @@ describe("Memo workspace", () => {
     await user.click(screen.getByRole("button", { name: /取\s*消/ }));
     await waitFor(() =>
       expect(
-        screen.getByRole("dialog", { name: "放弃未保存的修改？" }),
+        screen.getByRole("dialog", { name: "关闭编辑并保留草稿？" }),
       ).toBeVisible(),
     );
     await user.click(screen.getByRole("button", { name: "继续编辑" }));

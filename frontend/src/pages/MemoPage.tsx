@@ -15,6 +15,7 @@ import {
 } from "antd";
 import type { InputRef } from "antd";
 import {
+  SyncOutlined,
   FilterOutlined,
   SnippetsOutlined,
   PlusOutlined,
@@ -61,6 +62,25 @@ export default function MemoPage() {
       memos.list(filters.q, filters.tag, filters.offset, signal),
     placeholderData: keepPreviousData,
   });
+  const [syncing, setSyncing] = useState(false);
+  const syncingRef = useRef(false);
+  const sync = async () => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    setSyncing(true);
+    try {
+      await Promise.all([
+        cache.invalidateQueries({ queryKey: ["memos"] }, { throwOnError: true }),
+        cache.invalidateQueries({ queryKey: ["tags"] }, { throwOnError: true }),
+      ]);
+      message.success("同步完成");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "同步失败，请重试");
+    } finally {
+      syncingRef.current = false;
+      setSyncing(false);
+    }
+  };
   const tags = useQuery({
     queryKey: ["tags"],
     queryFn: ({ signal }) => memos.tags(signal),
@@ -192,6 +212,15 @@ export default function MemoPage() {
           onChange={(e) => filters.changeSearch(e.target.value)}
         />
         <Flex gap={8} className="workspace-actions">
+          <Button
+            size="large"
+            icon={<SyncOutlined />}
+            aria-label="同步"
+            loading={syncing}
+            onClick={() => void sync()}
+          >
+            {!mobile && "同步"}
+          </Button>
           <Button
             type="primary"
             size="large"
